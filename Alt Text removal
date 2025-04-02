@@ -1,0 +1,200 @@
+import os
+import time
+import win32com.client
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+class RemoveAltTextApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Anplify PowerPoint Alt Text Removal")
+        self.configure(bg="#f0f0f0")
+        self.geometry("550x350")
+        self.resizable(False, False)
+
+        self.font_family = "Arial"
+        self.font_size_heading = 14
+        self.font_size_text = 10
+
+        self.presentation_path = None
+        self.powerpoint = None
+
+        self.create_widgets()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def create_widgets(self):
+        self.main_frame = tk.Frame(self, bg="#f0f0f0")
+        self.main_frame.pack(padx=20, pady=20, fill="both", expand=True)
+
+        self.label_title = tk.Label(
+            self.main_frame,
+            text="Anplify PowerPoint Alt Text Removal",
+            font=(self.font_family, self.font_size_heading, "bold"),
+            bg="#f0f0f0",
+            fg="#333333"
+        )
+        self.label_title.pack(pady=(0, 15))
+
+        self.file_frame = tk.Frame(self.main_frame, bg="#f0f0f0")
+        self.file_frame.pack(fill="x")
+
+        self.button_browse = tk.Button(
+            self.file_frame,
+            text="Select PowerPoint File",
+            command=self.select_file,
+            font=(self.font_family, self.font_size_text),
+            bg="#007bff",
+            fg="white",
+            relief="flat",
+            padx=10,
+            pady=5,
+        )
+        self.button_browse.pack(side="left")
+
+        self.label_status = tk.Label(
+            self.file_frame,
+            text="",
+            font=(self.font_family, self.font_size_text, "italic"),
+            bg="#f0f0f0",
+            fg="#555555",
+        )
+        self.label_status.pack(side="left", padx=(10, 0))
+
+        self.progress_bar = ttk.Progressbar(
+            self.main_frame,
+            orient="horizontal",
+            mode="indeterminate",
+            length=400,
+        )
+        self.progress_bar.pack(pady=(15, 10))
+        self.progress_bar.pack_forget()
+
+        self.button_process = tk.Button(
+            self.main_frame,
+            text="Remove Alt Text",
+            command=self.process_file,
+            state=tk.DISABLED,
+            font=(self.font_family, self.font_size_text, "bold"),
+            bg="#28a745",
+            fg="white",
+            relief="flat",
+            padx=15,
+            pady=8,
+        )
+        self.button_process.pack(pady=(10, 15))
+
+        self.label_output = tk.Label(
+            self.main_frame,
+            text="",
+            wraplength=450,
+            font=(self.font_family, self.font_size_text),
+            bg="#f0f0f0",
+            fg="#333333",
+        )
+        self.label_output.pack()
+
+    def select_file(self):
+        self.presentation_path = filedialog.askopenfilename(
+            filetypes=[("PowerPoint files", "*.pptx")]
+        )
+        if self.presentation_path:
+            self.label_status.config(text=f"Selected: {os.path.basename(self.presentation_path)}")
+            self.button_process.config(state=tk.NORMAL)
+            self.label_output.config(text="")
+
+    def process_file(self):
+        if not self.presentation_path:
+            messagebox.showerror("Error", "No file selected!")
+            return
+
+        output_path = self.presentation_path.replace(".pptx", "_no_alt_text.pptx")
+
+        try:
+            self.progress_bar.pack(pady=(15, 10))
+            self.progress_bar.start()
+
+            result = self.remove_alt_text(self.presentation_path, output_path)
+
+            if result:
+                self.label_output.config(
+                    text=f"Alt text removed successfully!\nFile saved as: {os.path.basename(output_path)}",
+                    fg="green"
+                )
+            else:
+                messagebox.showerror("Error", "There were issues during alt text removal. Check console for details.")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+
+        finally:
+            self.progress_bar.stop()
+            self.progress_bar.pack_forget()
+
+    def clear_alt_text_for_shape(self, shape, slide_number, shape_identifier):
+        """Helper function to clear alt text and title for a given shape."""
+        try:
+            shape.AlternativeText = ""
+        except Exception as e:
+            print(f"Warning: Could not clear alt text for shape {shape_identifier} on slide {slide_number}. Error: {e}, Shape: {shape}")
+        try:
+            shape.Title = ""
+        except Exception as e:
+            print(f"Warning: Could not clear title for shape {shape_identifier} on slide {slide_number}. Error: {e}, Shape: {shape}")
+
+    def remove_alt_text(self, input_path, output_path):
+        try:
+            self.powerpoint = win32com.client.Dispatch("PowerPoint.Application") # changed DispatchEx to Dispatch here.
+            self.powerpoint.Visible = 1
+            presentation = self.powerpoint.Presentations.Open(input_path, WithWindow=False)
+
+            for slide in presentation.Slides:
+                num_shapes = slide.Shapes.Count
+                for i in range(1, num_shapes + 1):
+                    try:
+                        shape = slide.Shapes.Item(i)
+                    except Exception as e:
+                        print(f"Warning: Could not retrieve shape {i} on slide {slide.SlideNumber}. Error: {e}")
+                        continue
+
+                    shape_type = None
+                    try:
+                        shape_type = shape.Type
+                    except Exception as e:
+                        print(f"Warning: Could not determine type for shape {i} on slide {slide.SlideNumber}. Error: {e}")
+
+                    if shape_type == 6:  # msoGroup
+                        try:
+                            group_count = shape.GroupItems.Count
+                        except Exception as e:
+                            print(f"Warning: Could not retrieve group items for shape {i} on slide {slide.SlideNumber}. Error: {e}")
+                            group_count = 0
+                        for j in range(1, group_count + 1):
+                            try:
+                                sub_shape = shape.GroupItems.Item(j)
+                                self.clear_alt_text_for_shape(sub_shape, slide.SlideNumber, f"{i}.{j}")
+                            except Exception as e:
+                                print(f"Warning: Could not process sub-shape {j} of shape {i} on slide {slide.SlideNumber}. Error: {e}")
+                    else:
+                        self.clear_alt_text_for_shape(shape, slide.SlideNumber, i)
+
+            presentation.SaveAs(output_path, 24)
+            presentation.Close()
+            return True
+
+        except Exception as gen_err:
+            print(f"Error during alt text removal: {gen_err}")
+            return False
+
+        finally:
+            if self.powerpoint:
+                self.powerpoint.Quit()
+                self.powerpoint = None
+
+    def on_close(self):
+        if self.powerpoint:
+            self.powerpoint.Quit()
+        self.destroy()
+
+if __name__ == "__main__":
+    app = RemoveAltTextApp()
+    app.mainloop()
